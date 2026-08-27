@@ -1,0 +1,7 @@
+# 64-bit CPython 3.11 or 3.12 is recommended on Windows.
+numpy>=1.26,<3
+scipy>=1.12,<2
+scikit-image>=0.23,<1
+rawpy>=0.27,<0.28
+tifffile>=2024.8.30,<2027
+Pillow>=10,<13

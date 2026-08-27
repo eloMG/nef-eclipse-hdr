@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+build/
+dist/
+*.egg-info/
+
+# Pipeline scratch and generated products
+.eclipse-hdr-work/
+/.eclipse-hdr-testdeps/
+/tests/images/
+*_HDR.tif
+*_HDR.json
+*_HDR_preview.png
+*_alignment_preview.png
+*_edge_overlay.png
+intermediates/
