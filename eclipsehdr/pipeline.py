@@ -12,6 +12,7 @@ from typing import Any, Optional, Sequence
 
 import numpy as np
 
+from .aligned import export_aligned_linear_frames
 from .diagnostics import save_alignment_preview, save_edge_overlay, save_hdr_preview
 from .errors import EclipseHDRError, OutputExistsError, SuspiciousAlignmentError
 from .merge import create_float32_memmap, merge_linear_hdr
@@ -34,6 +35,7 @@ class PipelineConfig:
     single_bracket: bool = False
     max_gap_seconds: float = 2.0
     keep_intermediates: bool = False
+    aligned_only: bool = False
     save_diagnostics: bool = False
     on_suspicious: str = "skip"
     overwrite: bool = False
@@ -47,6 +49,7 @@ class GroupResult:
     reference_name: str
     status: str
     output_path: Optional[Path] = None
+    output_paths: tuple[Path, ...] = ()
     sidecar_path: Optional[Path] = None
     message: str = ""
 
@@ -220,13 +223,29 @@ def process_bracket(
     reference_index = len(paths) // 2
     reference_stem = paths[reference_index].stem
     output_path = config.output_dir / f"{reference_stem}_HDR.tif"
-    sidecar_path = config.output_dir / f"{reference_stem}_HDR.json"
+    aligned_dir = config.output_dir / "aligned" / reference_stem
+    aligned_output_paths = tuple(
+        aligned_dir / f"{index:02d}_{path.stem}_aligned_linear.tif"
+        for index, path in enumerate(paths)
+    )
+    sidecar_path = (
+        aligned_dir / f"{reference_stem}_aligned.json"
+        if config.aligned_only
+        else config.output_dir / f"{reference_stem}_HDR.json"
+    )
     timing_warnings = timestamp_gaps(metadata, config.max_gap_seconds)
     payload = _base_sidecar(group_index, paths, metadata, reference_index, timing_warnings)
+    payload["mode"] = "aligned_only" if config.aligned_only else "hdr_merge"
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
-    if output_path.exists() and not config.overwrite:
-        message = f"Output already exists (use --overwrite): {output_path.name}"
+    existing_outputs = (
+        [path for path in aligned_output_paths if path.exists()]
+        if config.aligned_only
+        else ([output_path] if output_path.exists() else [])
+    )
+    if existing_outputs and not config.overwrite:
+        names = ", ".join(path.name for path in existing_outputs)
+        message = f"Output already exists (use --overwrite): {names}"
         return GroupResult(
             group_index,
             paths[reference_index].name,
@@ -265,11 +284,6 @@ def process_bracket(
                 for index, frame in enumerate(developed)
                 if frame.warnings
             ]
-
-            factors, exposure_warnings = exposure_factors(metadata, reference_index)
-            payload["exposure_warnings"] = exposure_warnings
-            for warning in exposure_warnings:
-                LOGGER.warning("Group %d: %s", group_index, warning)
 
             alignment = estimate_group_alignment(
                 frames, metadata, reference_index, config.registration
@@ -318,6 +332,64 @@ def process_bracket(
                     "Continuing group %d only because --on-suspicious continue was selected",
                     group_index,
                 )
+
+            if config.aligned_only:
+                exported_paths = export_aligned_linear_frames(
+                    frames,
+                    alignment.offsets_yx,
+                    aligned_output_paths,
+                    work_dir / "aligned_export",
+                    chunk_rows=config.merge.chunk_rows,
+                    interpolation_order=config.merge.interpolation_order,
+                    overwrite=config.overwrite,
+                )
+                height, width, _ = frames[0].shape
+                payload.update(
+                    status=(
+                        "complete"
+                        if not alignment.suspicious
+                        else "complete_suspicious_override"
+                    ),
+                    output={
+                        "type": "aligned_linear_frames",
+                        "directory": str(aligned_dir.resolve()),
+                        "format": "TIFF, contiguous RGB, uint16, linear-sRGB primaries, unprofiled",
+                        "dimensions": {"width": width, "height": height},
+                        "interpolation": (
+                            "bilinear translation"
+                            if config.merge.interpolation_order == 1
+                            else "nearest-neighbor translation"
+                        ),
+                        "outside_source_bounds": "black (integer code 0)",
+                        "exposure_handling": (
+                            "original exposure retained independently in each frame; "
+                            "no normalization or HDR merge"
+                        ),
+                        "files": [
+                            {
+                                "frame_index": frame.frame_index,
+                                "source_filename": paths[frame.frame_index].name,
+                                "path": str(exported_paths[frame.frame_index].resolve()),
+                                "dx": frame.dx,
+                                "dy": frame.dy,
+                            }
+                            for frame in alignment.frames
+                        ],
+                    },
+                )
+                write_json(sidecar_path, payload)
+                return GroupResult(
+                    group_index,
+                    paths[reference_index].name,
+                    "complete",
+                    output_paths=exported_paths,
+                    sidecar_path=sidecar_path,
+                )
+
+            factors, exposure_warnings = exposure_factors(metadata, reference_index)
+            payload["exposure_warnings"] = exposure_warnings
+            for warning in exposure_warnings:
+                LOGGER.warning("Group %d: %s", group_index, warning)
 
             output_memmap = create_float32_memmap(work_dir / "hdr.npy", developed[0].shape)
             mapped_arrays.append(output_memmap)

@@ -18,3 +18,17 @@ def test_invalid_merge_threshold_order_is_rejected(tmp_path) -> None:
     with pytest.raises(SystemExit):
         config_from_args(args, parser)
 
+
+def test_aligned_only_can_keep_unaligned_intermediates_too(tmp_path) -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            str(tmp_path),
+            str(tmp_path / "out"),
+            "--aligned-only",
+            "--keep-intermediates",
+        ]
+    )
+    config = config_from_args(args, parser)
+    assert config.aligned_only is True
+    assert config.keep_intermediates is True

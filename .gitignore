@@ -16,3 +16,4 @@ dist/
 *_alignment_preview.png
 *_edge_overlay.png
 intermediates/
+aligned/

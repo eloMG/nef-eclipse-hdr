@@ -77,6 +77,55 @@ def write_linear_intermediate(path: Path, rgb_u16: np.ndarray) -> None:
     )
 
 
+def write_aligned_linear_tiff(
+    path: Path,
+    rgb_u16: np.ndarray,
+    *,
+    dy: float,
+    dx: float,
+    verify: bool = True,
+) -> None:
+    """Write one full-resolution translated linear uint16 RGB frame."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if rgb_u16.ndim != 3 or rgb_u16.shape[2] != 3:
+        raise EclipseHDRError(
+            f"Aligned frame must have shape (height, width, 3), got {rgb_u16.shape}"
+        )
+    if rgb_u16.dtype != np.uint16:
+        raise EclipseHDRError(f"Aligned frame must be uint16 before writing, got {rgb_u16.dtype}")
+
+    tifffile.imwrite(
+        path,
+        rgb_u16,
+        photometric="rgb",
+        planarconfig="contig",
+        metadata=None,
+        compression=None,
+        bigtiff=None,
+        description=(
+            f"Linear LibRaw development; translated by dx={dx:+.6f}, dy={dy:+.6f} "
+            "pixels into the bracket reference coordinates; black outside source bounds; "
+            "original exposure retained; no tone mapping or gamma encoding"
+        ),
+        software="eclipse-hdr",
+    )
+
+    if verify:
+        with tifffile.TiffFile(path) as tif:
+            page = tif.pages[0]
+            if page.dtype != np.dtype(np.uint16) or page.shape != rgb_u16.shape:
+                raise EclipseHDRError(
+                    f"Aligned TIFF verification failed: wrote {page.shape} {page.dtype}, "
+                    f"expected {rgb_u16.shape} uint16"
+                )
+            if str(page.photometric.name).upper() != "RGB":
+                raise EclipseHDRError(
+                    "Aligned TIFF verification failed: "
+                    f"photometric is {page.photometric.name}, not RGB"
+                )
+
+
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     """Atomically replace a UTF-8 JSON sidecar."""
 

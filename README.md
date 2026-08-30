@@ -1,8 +1,9 @@
 # Eclipse HDR
 
-`eclipse_hdr.py` develops Nikon NEF exposure brackets into linear RGB, aligns
-each frame with **x/y translation only**, and merges the measurements into one
-untone-mapped 32-bit floating-point TIFF per bracket.
+`eclipse_hdr.py` develops Nikon NEF exposure brackets into linear RGB and aligns
+each frame with **x/y translation only**. It can either merge the measurements
+into one untone-mapped 32-bit floating-point TIFF per bracket or export all five
+aligned linear frames without merging them.
 
 It intentionally performs no tone mapping, sharpening, denoising, deghosting,
 contrast enhancement, lens correction, or creative color adjustment. The NEFs
@@ -65,6 +66,50 @@ shared native-pixel crop as `--roi X,Y,W,H`, for example:
   --single-bracket --roi 3100,1800,2200,2200 --alignment-preview
 ```
 
+## Export five aligned frames without an HDR merge
+
+Use `--aligned-only` to write the five full-resolution registered images and
+skip the HDR merge. To process just group 3 from a folder that also contains
+other brackets:
+
+```powershell
+.\.venv\Scripts\python.exe eclipse_hdr.py `
+  "D:\Photos\Eclipse\NEF" `
+  "D:\Photos\Eclipse\Aligned" `
+  --start-group 3 `
+  --single-bracket `
+  --aligned-only `
+  --max-shift 60 `
+  --registration-crop 3000 `
+  --alignment-preview `
+  --debug
+```
+
+Group numbers are zero-based, so group 3 is chronological files 16 through 20.
+The output for a bracket whose central reference is `20-27-04.58.NEF` is:
+
+```text
+<output-dir>\aligned\20-27-04.58\00_20-27-04.01_aligned_linear.tif
+<output-dir>\aligned\20-27-04.58\01_20-27-04.30_aligned_linear.tif
+<output-dir>\aligned\20-27-04.58\02_20-27-04.58_aligned_linear.tif
+<output-dir>\aligned\20-27-04.58\03_20-27-04.86_aligned_linear.tif
+<output-dir>\aligned\20-27-04.58\04_20-27-05.16_aligned_linear.tif
+<output-dir>\aligned\20-27-04.58\20-27-04.58_aligned.json
+```
+
+Each TIFF is full-size, 16-bit linear RGB and keeps that source frame's original
+exposure. Bilinear translation places it in the central frame's coordinates;
+pixels outside its shifted source footprint are black. This mode performs no
+exposure normalization, HDR merge, tone mapping, sharpening, or denoising.
+
+`--keep-intermediates` has a different purpose: it retains the developed images
+*before* alignment under `output\intermediates`. It may be used together with
+`--aligned-only` when both the unaligned and aligned versions are wanted.
+
+The suspicious-alignment policy still applies. Inspect the diagnostics first;
+if the offsets are correct despite a physical-motion warning, deliberately rerun
+the same command with `--on-suspicious continue --overwrite`.
+
 ## Batch processing
 
 Once the first bracket looks correct:
@@ -96,6 +141,7 @@ Useful controls:
 --registration-crop 2048
 --roi X,Y,W,H
 --alignment-preview
+--aligned-only
 --keep-intermediates
 --on-suspicious {skip,continue,error}
 --start-group N --end-group N
@@ -105,7 +151,8 @@ Useful controls:
 ```
 
 Run `python eclipse_hdr.py --help` for all radiometric and sanity-check options.
-`--keep-intermediates` writes very large linear uint16 TIFFs under
+`--aligned-only` writes the translated final frames and skips the HDR merge.
+`--keep-intermediates` writes very large *unaligned* linear uint16 TIFFs under
 `output\intermediates`; otherwise no developed intermediate TIFFs are retained.
 
 ## What the pipeline does
@@ -228,10 +275,10 @@ Install the test dependency and run:
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-The 27-test synthetic suite covers fractional translation sign/axis, exposure changes,
+The synthetic suite covers fractional translation sign/axis, exposure changes,
 constant-motion checks, clipping and black fallback behavior, shutter/ISO/
 aperture normalization, non-wrapping borders, grouping, rawpy parameter locking,
-and float-TIFF values above `1`.
+aligned-only 16-bit outputs, and float-TIFF values above `1`.
 
 A real five-NEF totality/diamond-ring bracket was also run end to end with rawpy
 0.27.0 / LibRaw 0.22.1. It contains 8288 x 5520 Nikon frames at 400 mm, ISO 64,
@@ -243,6 +290,8 @@ f/7.1, and 1/250 through 1/40 second. Validation confirmed:
   versus metadata-predicted 1.600, 0.640, 1.000, 2.667, and 4.000;
 - a finite 5520 x 8288 x 3 classic TIFF with contiguous float32 RGB, no
   compression, and no 8-bit conversion;
+- five full-resolution 5520 x 8288 aligned-only TIFFs with contiguous uint16
+  RGB, preserved individual exposures, and the same measured translations;
 - visually coincident lunar-limb edges plus retained corona and prominence detail
   in the display-only diagnostics.
 

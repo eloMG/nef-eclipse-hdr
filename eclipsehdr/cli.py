@@ -30,12 +30,13 @@ def build_parser() -> argparse.ArgumentParser:
         prog="eclipse_hdr.py",
         description=(
             "Develop Nikon NEFs linearly, align each bracket with x/y translation only, "
-            "and write an untone-mapped float32 TIFF master."
+            "and either write an untone-mapped float32 HDR master or export the "
+            "aligned linear frames."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("input_dir", type=Path, help="directory containing chronological NEFs")
-    parser.add_argument("output_dir", type=Path, help="directory for HDR masters and JSON sidecars")
+    parser.add_argument("output_dir", type=Path, help="directory for TIFF outputs and JSON sidecars")
     parser.add_argument("--group-size", type=int, default=5, help="consecutive NEFs per bracket")
     parser.add_argument(
         "--max-shift", type=float, default=20.0, help="maximum absolute dx and dy in pixels"
@@ -109,6 +110,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="save large 16-bit linear developed TIFFs under output/intermediates",
     )
     parser.add_argument(
+        "--aligned-only",
+        action="store_true",
+        help=(
+            "write every full-resolution aligned linear uint16 TIFF under output/aligned "
+            "and skip the HDR merge"
+        ),
+    )
+    parser.add_argument(
         "--black-threshold",
         type=float,
         default=0.001,
@@ -133,9 +142,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="postprocessed RGB clipping fallback threshold",
     )
     parser.add_argument(
-        "--chunk-rows", type=int, default=128, help="rows merged at once to bound memory use"
+        "--chunk-rows", type=int, default=128, help="rows processed at once to bound memory use"
     )
-    parser.add_argument("--overwrite", action="store_true", help="replace existing HDR masters")
+    parser.add_argument("--overwrite", action="store_true", help="replace existing outputs")
     parser.add_argument(
         "--debug",
         action="store_true",
@@ -201,6 +210,7 @@ def config_from_args(args: argparse.Namespace, parser: argparse.ArgumentParser) 
         single_bracket=args.single_bracket,
         max_gap_seconds=args.max_gap_seconds,
         keep_intermediates=args.keep_intermediates,
+        aligned_only=args.aligned_only,
         save_diagnostics=args.alignment_preview or args.debug,
         on_suspicious=args.on_suspicious,
         overwrite=args.overwrite,

@@ -12,6 +12,7 @@ from scipy import ndimage
 
 from .errors import EclipseHDRError
 from .models import MergeConfig, MergeStatistics
+from .resampling import sample_translated_rgb_chunk
 
 LOGGER = logging.getLogger(__name__)
 
@@ -39,57 +40,6 @@ def _validate_config(config: MergeConfig) -> None:
         raise EclipseHDRError("chunk_rows must be positive")
     if config.interpolation_order not in (0, 1):
         raise EclipseHDRError("Only nearest or bilinear translation interpolation is supported")
-
-
-def _coordinate_grid(
-    y0: int, y1: int, width: int, dy: float, dx: float
-) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray]]:
-    source_y = np.arange(y0, y1, dtype=np.float32)[:, None] - np.float32(dy)
-    source_x = np.arange(width, dtype=np.float32)[None, :] - np.float32(dx)
-    coordinates = np.empty((2, y1 - y0, width), dtype=np.float32)
-    coordinates[0, :, :] = source_y
-    coordinates[1, :, :] = source_x
-    return coordinates, (source_y, source_x)
-
-
-def _sample_rgb_chunk(
-    frame: np.ndarray,
-    y0: int,
-    y1: int,
-    dy: float,
-    dx: float,
-    order: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Apply the one allowed transform, sampling source at ``output - shift``."""
-
-    height, width, _ = frame.shape
-    if dy == 0.0 and dx == 0.0:
-        rgb = np.asarray(frame[y0:y1, :, :], dtype=np.float32) * np.float32(1.0 / 65535.0)
-        valid = np.ones((y1 - y0, width), dtype=bool)
-        coordinates = np.empty((0,), dtype=np.float32)
-        return rgb, valid, coordinates
-
-    coordinates, components = _coordinate_grid(y0, y1, width, dy, dx)
-    source_y, source_x = components
-    valid = (
-        (source_y >= 0.0)
-        & (source_y <= height - 1.0)
-        & (source_x >= 0.0)
-        & (source_x <= width - 1.0)
-    )
-    rgb = np.empty((y1 - y0, width, 3), dtype=np.float32)
-    for channel in range(3):
-        ndimage.map_coordinates(
-            frame[..., channel],
-            coordinates,
-            output=rgb[..., channel],
-            order=order,
-            mode="constant",
-            cval=0.0,
-            prefilter=False,
-        )
-    rgb *= np.float32(1.0 / 65535.0)
-    return rgb, valid, coordinates
 
 
 def _sample_mask_chunk(
@@ -258,7 +208,7 @@ def merge_linear_hdr(
         for frame, mask, (dy, dx), exposure_ratio in zip(
             frames, masks, offsets_yx, relative
         ):
-            rgb, spatial, coordinates = _sample_rgb_chunk(
+            rgb, spatial, coordinates = sample_translated_rgb_chunk(
                 frame, y0, y1, float(dy), float(dx), config.interpolation_order
             )
             source_saturated = _sample_mask_chunk(mask, y0, y1, width, coordinates)
