@@ -1,4 +1,4 @@
-"""Small data objects shared by the eclipse HDR pipeline."""
+"""Small data objects shared by the NEF Eclipse HDR pipeline."""
 
 from __future__ import annotations
 
@@ -87,7 +87,7 @@ class CropRegion:
 
 @dataclass(frozen=True)
 class RegistrationCandidate:
-    """One translation-only estimate from one exposure-invariant representation."""
+    """One translation-only estimate from one exposure-tolerant representation."""
 
     dy: float
     dx: float
@@ -164,7 +164,7 @@ class AlignmentResult:
 
 @dataclass(frozen=True)
 class MergeStatistics:
-    """Counts that expose where the five RAWs contained no ideal measurement."""
+    """Counts that expose where the bracket frames contain no ideal measurement."""
 
     pixel_count: int
     weighted_pixel_count: int

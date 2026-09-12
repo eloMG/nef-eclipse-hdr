@@ -154,7 +154,7 @@ def export_aligned_linear_frames(
                 if mapped_path.exists():
                     mapped_path.unlink()
 
-        # All five files are complete before any is published under its final name.
+        # Every output is complete before any is published under its final name.
         _publish_outputs(partials, overwrite)
         return tuple(output_paths)
     finally:

@@ -72,7 +72,7 @@ def import_rawpy() -> Any:
         return importlib.import_module("rawpy")
     except ImportError as exc:
         raise DependencyError(
-            "rawpy is required to read NEF files. Install the Windows dependencies with "
+            "rawpy is required to read NEF files. Install the dependencies with "
             "'python -m pip install -r requirements.txt'."
         ) from exc
 
@@ -94,8 +94,8 @@ def _first_attribute(obj: Any, *names: str) -> Any:
 
 def _timestamp(value: Any) -> Optional[datetime]:
     if isinstance(value, datetime):
-        # LibRaw's missing timestamp is zero; rawpy exposes that as the local
-        # Unix epoch rather than None.  No eclipse capture here predates 1980.
+        # LibRaw uses zero for a missing timestamp, which rawpy exposes as the
+        # local Unix epoch rather than None. Dates before 1980 are treated as absent.
         return value if value.year >= 1980 else None
     if isinstance(value, (int, float)) and value > 0:
         try:
@@ -106,7 +106,7 @@ def _timestamp(value: Any) -> Optional[datetime]:
 
 
 def metadata_from_open_raw(raw: Any, path: Path) -> ExposureMetadata:
-    """Read LibRaw's non-image metadata, accepting old and new field spellings."""
+    """Read metadata using the rawpy attribute variants supported by this project."""
 
     other = getattr(raw, "other", None)
     if other is None:
@@ -186,8 +186,8 @@ def build_rawpy_params(rawpy_module: Any, settings: RawDevelopmentSettings) -> A
         median_filter_passes=0,
         use_camera_wb=False,
         use_auto_wb=False,
-        # rawpy 0.27's Cython boundary requires an actual list, not merely a
-        # generic four-value sequence/tuple.
+        # rawpy's Cython boundary requires a concrete list rather than a generic
+        # four-value sequence.
         user_wb=list(settings.white_balance),
         output_color=rawpy_module.ColorSpace.sRGB,
         output_bps=16,

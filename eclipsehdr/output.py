@@ -37,14 +37,13 @@ def write_float_tiff(path: Path, rgb: np.ndarray, *, verify: bool = True) -> Non
         planarconfig="contig",
         metadata=None,
         compression=None,
-        # Nikon-sized RGB float files are normally <4 GiB.  tifffile will switch
-        # automatically if a larger array actually requires BigTIFF.
+        # tifffile selects BigTIFF automatically when the array size requires it.
         bigtiff=None,
         description=(
             "Linear-light, scene-referred relative RGB; sRGB/BT.709 primaries; "
             "no tone mapping, gamma encoding, sharpening, or denoising"
         ),
-        software="eclipse-hdr",
+        software="nef-eclipse-hdr",
     )
 
     if verify:
@@ -73,7 +72,7 @@ def write_linear_intermediate(path: Path, rgb_u16: np.ndarray) -> None:
         metadata=None,
         compression=None,
         description="Linear LibRaw development; diagnostic intermediate only",
-        software="eclipse-hdr",
+        software="nef-eclipse-hdr",
     )
 
 
@@ -108,7 +107,7 @@ def write_aligned_linear_tiff(
             "pixels into the bracket reference coordinates; black outside source bounds; "
             "original exposure retained; no tone mapping or gamma encoding"
         ),
-        software="eclipse-hdr",
+        software="nef-eclipse-hdr",
     )
 
     if verify:

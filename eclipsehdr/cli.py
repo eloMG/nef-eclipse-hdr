@@ -1,4 +1,4 @@
-"""Windows-friendly command-line interface."""
+"""Command-line interface for NEF Eclipse HDR."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Scene-radiance HDR merge in linear floating-point space."""
+"""Relative exposure-normalized HDR merge in linear floating-point space."""
 
 from __future__ import annotations
 
@@ -123,11 +123,11 @@ def merge_linear_hdr(
     saturation_masks: Optional[Sequence[Optional[np.ndarray]]] = None,
     output: Optional[np.ndarray] = None,
 ) -> tuple[np.ndarray, MergeStatistics]:
-    """Merge aligned linear RGB into reference-exposure scene-radiance units.
+    """Merge aligned linear RGB into relative reference-exposure units.
 
-    For frame ``i``, ``q_i = shutter * ISO / aperture**2`` and the radiance
-    estimate is ``rgb_i / (q_i / q_reference)``.  Weights are computed from the
-    original developed measurement, never from the amplified radiance estimate.
+    For frame ``i``, ``q_i = shutter * ISO / aperture**2`` and the normalized
+    estimate is ``rgb_i / (q_i / q_reference)``. Weights are computed from the
+    original developed measurement, never from the exposure-normalized estimate.
     One scalar weight per RGB triplet prevents channel-dependent color seams.
     """
 

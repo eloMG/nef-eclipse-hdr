@@ -516,8 +516,8 @@ def estimate_pair_translation(
         or mask_coverage_is_unbalanced
     ):
         # Strongly unbalanced clipping can remove the only unique feature from
-        # one diamond-ring exposure.  Retain the ordinary exposure-tolerant
-        # views for both images rather than creating asymmetric evidence.
+        # one frame. Retain the ordinary exposure-tolerant views for both images
+        # rather than creating asymmetric evidence.
         reference_valid = None
         moving_valid = None
     else:
@@ -939,7 +939,7 @@ def estimate_group_alignment(
     *,
     saturation_masks: Sequence[np.ndarray | None] | None = None,
 ) -> AlignmentResult:
-    """Align every frame directly to the central exposure using x/y translation only."""
+    """Align every frame to the selected reference using x/y translation only."""
 
     if len(frames) != len(metadata):
         raise RegistrationError("Frame and metadata counts differ during registration")

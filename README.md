@@ -1,35 +1,84 @@
-# Eclipse HDR
+# NEF Eclipse HDR
 
-`eclipse_hdr.py` develops Nikon NEF exposure brackets into linear RGB and aligns
-each frame with **x/y translation only**. It can either merge the measurements
-into one untone-mapped 32-bit floating-point TIFF per bracket or export all five
-aligned linear frames without merging them.
+NEF Eclipse HDR develops bracketed Nikon NEF eclipse photographs into linear
+RGB, registers each frame with **x/y translation only**, and produces either:
 
-It intentionally performs no tone mapping, sharpening, denoising, deghosting,
-contrast enhancement, lens correction, or creative color adjustment. The NEFs
-are opened read-only and are never modified.
+- one untone-mapped 32-bit floating-point TIFF for each bracket; or
+- every registered frame as a separate 16-bit linear TIFF.
 
-## Install on Windows
+The original NEF files are opened read-only and are never modified. The
+pipeline intentionally performs no tone mapping, sharpening, denoising,
+deghosting, contrast enhancement, lens correction, or creative color
+adjustment.
+
+> **Experimental software:** this is a specialized eclipse-processing tool, not
+> a general RAW converter or a calibrated scientific-radiometry pipeline. Check
+> its diagnostics and inspect every result before relying on it.
+
+## Scope and limitations
+
+- **Nikon NEF input only.** The program discovers files with a `.nef` extension
+  directly inside the input directory. It does not scan subdirectories or
+  accept other RAW formats, and it does not verify the camera maker or model.
+  Support for a particular camera body and NEF compression mode also depends on
+  the installed rawpy/LibRaw version.
+- **Five-frame brackets are the tested workflow.** Five is the default, although
+  `--group-size` accepts any value of at least two. The positional middle frame
+  is the reference, so an odd group size is preferable.
+- **Bracket boundaries are not detected.** Files are ordered by capture time
+  when every timestamp is available, otherwise by natural filename order, and
+  then divided into consecutive fixed-size groups. Keep unrelated NEFs out of
+  the input directory. An incomplete trailing group is ignored with a warning.
+- **A consistent camera setup is assumed.** All frames must develop to the same
+  dimensions. White balance, orientation, and sensor white level from the
+  reference frame are applied to the whole bracket.
+- **Alignment is translation-only.** Rotation, scale, perspective, affine or
+  local warping, and lens distortion are not corrected. Moving clouds,
+  foreground objects, or changing eclipse features may therefore leave ghosts
+  or other merge artifacts.
+- **Automatic localization is Sun-specific.** A dominant horizon, cloud edge,
+  or other bright feature can be selected instead. Use `--roi X,Y,W,H` when the
+  automatic crop is wrong.
+- **HDR merging depends on exposure metadata.** Shutter speed and ISO must be
+  valid. If every aperture is missing, the program assumes it stayed constant.
+  If only some are missing, it fills them from the bracket median only when the
+  known apertures agree within 2%; otherwise it rejects the bracket.
+- **The HDR values are relative.** They are exposure-normalized, camera-developed
+  linear RGB values referenced to the middle frame—not absolute scene radiance
+  or calibrated solar measurements.
+- **The float TIFF is unprofiled.** It records linear-sRGB/BT.709 primaries in
+  its description, but downstream software must interpret the samples through
+  an appropriate linear-RGB color-management workflow.
+- **The documented environment is 64-bit Windows with Python 3.11 or 3.12.**
+  Automated validation currently covers Windows with Python 3.12; other
+  platforms and interpreter versions are unvalidated.
+- **Full-resolution processing is storage-intensive.** Temporary arrays and
+  uncompressed output can require several gigabytes.
+- **JSON sidecars contain resolved local paths.** Review them before sharing if
+  directory names are sensitive.
+
+This is an independent project and is not affiliated with or endorsed by Nikon.
+“Nikon” and “NEF” are used only to identify the supported input format.
+
+## Installation
 
 Use 64-bit Python 3.11 or 3.12. A virtual environment keeps the imaging
 dependencies isolated:
 
 ```powershell
-cd C:\path\to\align-raw-eclipse
+cd C:\path\to\repository
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-`rawpy` publishes Windows wheels containing LibRaw, so a separate LibRaw install
-is normally unnecessary. Full-resolution Nikon files need substantial temporary
-disk space: five disk-backed uint16 RGB developments plus one float32 HDR array
-can occupy several gigabytes. Scratch files are deleted after each group.
+`rawpy` publishes Windows wheels containing LibRaw, so a separate LibRaw
+installation is normally unnecessary.
 
 ## Validate one bracket first
 
-Put one or more chronological sets of five NEFs directly in the input folder.
-The safest first run processes group 0 only and saves visual diagnostics:
+Put one chronological bracket directly in the input directory. The safest
+first run processes group 0 only and saves visual diagnostics:
 
 ```powershell
 .\.venv\Scripts\python.exe eclipse_hdr.py `
@@ -40,40 +89,38 @@ The safest first run processes group 0 only and saves visual diagnostics:
   --debug
 ```
 
-Inspect these before starting the batch:
+Inspect:
 
-- the printed `dx`/`dy` offsets (these are shifts **applied** to each frame);
-- `diagnostics\*_alignment_preview.png`, whose upper row is unaligned and lower
-  row is aligned;
+- the printed `dx`/`dy` offsets, which are the shifts applied to each frame;
+- `diagnostics\*_alignment_preview.png`, with unaligned crops above and aligned
+  crops below;
 - `diagnostics\*_edge_overlay.png`, where reference edges are red, moving edges
-  are cyan, and correct overlap becomes pale/white;
-- `diagnostics\*_HDR_preview.png`, a clearly labeled display-stretched crop used
-  only to inspect the merged corona/limb (the TIFF master is unchanged);
-- `*_HDR.json`, including all exposure metadata, candidates, offsets, physical
-  checks, exposure factors, fallback-pixel counts, and warnings;
-- the solar limb/corona in the `*_HDR.tif` master at high zoom.
+  are cyan, and close overlap appears pale or white;
+- `diagnostics\*_HDR_preview.png`, after a successful merge, as a
+  display-stretched inspection image that does not alter the TIFF master;
+- `*_HDR.json`, which always records the alignment details and, after a
+  successful merge, the exposure factors and fallback counts; and
+- after a successful merge, the solar limb and corona in the `*_HDR.tif` master
+  at high zoom.
 
-The default policy is `--on-suspicious skip`: a bracket that fails translation
-confidence or independent-representation consensus gets a JSON report and
-diagnostics but no HDR master. Motion-model deviations remain blocking when the
-image evidence is weak; moderate deviations with strong independent consensus
-are recorded as advisories, while large discontinuities remain blocking.
-After manual inspection, an individual bracket can deliberately be rerun with
-`--on-suspicious continue --overwrite`. That override is recorded in its JSON.
+The default `--on-suspicious skip` policy writes a report and diagnostics but no
+HDR master when the alignment checks are not convincing. If visual inspection
+shows that the offsets are correct, rerun that bracket deliberately with
+`--on-suspicious continue`. Add `--overwrite` only when replacing output that
+already exists. The override is recorded in the JSON sidecar.
 
-If automatic localization chooses the horizon or another bright object, give a
-shared native-pixel crop as `--roi X,Y,W,H`, for example:
+If automatic localization selects the wrong feature, provide one shared crop in
+native-image pixels:
 
 ```powershell
 .\.venv\Scripts\python.exe eclipse_hdr.py "D:\...\NEF" "D:\...\HDR" `
   --single-bracket --roi 3100,1800,2200,2200 --alignment-preview
 ```
 
-## Export five aligned frames without an HDR merge
+## Export aligned frames without merging
 
-Use `--aligned-only` to write the five full-resolution registered images and
-skip the HDR merge. To process just group 3 from a folder that also contains
-other brackets:
+Use `--aligned-only` to write every registered frame and skip the HDR merge.
+For example, this processes only zero-based group 3:
 
 ```powershell
 .\.venv\Scripts\python.exe eclipse_hdr.py `
@@ -82,40 +129,31 @@ other brackets:
   --start-group 3 `
   --single-bracket `
   --aligned-only `
-  --max-shift 60 `
-  --registration-crop 3000 `
-  --alignment-preview `
-  --debug
+  --alignment-preview
 ```
 
-Group numbers are zero-based, so group 3 is chronological files 16 through 20.
-The output for a bracket whose central reference is `20-27-04.58.NEF` is:
+With the default group size, group 3 contains the 16th through 20th files in
+sorted order. Its files are written as:
 
 ```text
-<output-dir>\aligned\20-27-04.58\00_20-27-04.01_aligned_linear.tif
-<output-dir>\aligned\20-27-04.58\01_20-27-04.30_aligned_linear.tif
-<output-dir>\aligned\20-27-04.58\02_20-27-04.58_aligned_linear.tif
-<output-dir>\aligned\20-27-04.58\03_20-27-04.86_aligned_linear.tif
-<output-dir>\aligned\20-27-04.58\04_20-27-05.16_aligned_linear.tif
-<output-dir>\aligned\20-27-04.58\20-27-04.58_aligned.json
+<output-dir>\aligned\<reference-stem>\00_<source-stem>_aligned_linear.tif
+<output-dir>\aligned\<reference-stem>\01_<source-stem>_aligned_linear.tif
+...
+<output-dir>\aligned\<reference-stem>\<reference-stem>_aligned.json
 ```
 
-Each TIFF is full-size, 16-bit linear RGB and keeps that source frame's original
-exposure. Bilinear translation places it in the central frame's coordinates;
-pixels outside its shifted source footprint are black. This mode performs no
-exposure normalization, HDR merge, tone mapping, sharpening, or denoising.
+Each TIFF is a full-size 16-bit linear RGB image at that source frame's original
+exposure. Bilinear translation places it in the reference frame's coordinates;
+pixels outside the shifted source footprint are black. This mode does not need
+the shutter, ISO, or aperture metadata required by the HDR merge.
 
-`--keep-intermediates` has a different purpose: it retains the developed images
-*before* alignment under `output\intermediates`. It may be used together with
-`--aligned-only` when both the unaligned and aligned versions are wanted.
+`--keep-intermediates` serves a different purpose: it retains the very large
+developed images *before* alignment under `output\intermediates`. It can be
+combined with `--aligned-only` when both unaligned and aligned files are needed.
 
-The suspicious-alignment policy still applies. Inspect the diagnostics first;
-if the offsets are correct despite a physical-motion warning, deliberately rerun
-the same command with `--on-suspicious continue --overwrite`.
+## Batch processing and grouping
 
-## Batch processing
-
-Once the first bracket looks correct:
+Once a single bracket has been checked, process every complete group:
 
 ```powershell
 .\.venv\Scripts\python.exe eclipse_hdr.py `
@@ -124,10 +162,7 @@ Once the first bracket looks correct:
   --group-size 5
 ```
 
-Every consecutive five files form one bracket. Capture timestamps are used for
-ordering when every NEF has one; otherwise natural filename order is used and a
-warning is emitted. An incomplete trailing group is never merged. Group numbers
-are zero-based, and both ends are inclusive:
+Group numbers are zero-based and both range endpoints are inclusive:
 
 ```powershell
 # Process groups 12 through 20.
@@ -135,193 +170,117 @@ are zero-based, and both ends are inclusive:
   --start-group 12 --end-group 20
 ```
 
-Useful controls:
+Common controls:
 
-```text
---group-size 5
---max-shift 20
---max-gap-seconds 2
---registration-crop 2048
---roi X,Y,W,H
---alignment-preview
---aligned-only
---keep-intermediates
---on-suspicious {skip,continue,error}
---start-group N --end-group N
---single-bracket
---overwrite
---debug
-```
+| Option | Purpose |
+| --- | --- |
+| `--group-size N` | Consecutive files per bracket; default `5` |
+| `--start-group N`, `--end-group N` | Select an inclusive zero-based group range |
+| `--single-bracket` | Process only `--start-group` |
+| `--max-shift PX` | Bound both translation axes; default `20` |
+| `--registration-crop PX` | Minimum native-pixel automatic crop size |
+| `--roi X,Y,W,H` | Override automatic Sun localization |
+| `--max-gap-seconds S` | Warn about unexpectedly slow burst timing |
+| `--alignment-preview` | Save visual alignment diagnostics |
+| `--aligned-only` | Export registered frames without merging |
+| `--keep-intermediates` | Retain unaligned developed TIFFs |
+| `--on-suspicious {skip,continue,error}` | Choose how failed alignment checks are handled |
+| `--overwrite` | Replace existing outputs |
+| `--debug` | Enable verbose logging and diagnostics |
 
-Run `python eclipse_hdr.py --help` for all radiometric and sanity-check options.
-`--aligned-only` writes the translated final frames and skips the HDR merge.
-`--keep-intermediates` writes very large *unaligned* linear uint16 TIFFs under
-`output\intermediates`; otherwise no developed intermediate TIFFs are retained.
+Run `python eclipse_hdr.py --help` for the complete, authoritative option list.
+After argument parsing, the exit status is `1` if any selected group fails;
+otherwise it is `2` if any group is skipped as suspicious, or `0` if all groups
+complete. An interruption returns `130`; invalid command syntax also returns `2`.
 
-## What the pipeline does
+## Processing model
 
-### 1. Linear RAW development
+### Linear RAW development
 
-The central frame (index `2` in a five-file bracket) supplies one white-balance
-vector, one LibRaw orientation code, and one sensor saturation level for every
-member. A camera metadata rotation is applied identically to the whole bracket;
-it is not an estimated registration parameter.
+The reference frame supplies one white-balance vector, one LibRaw orientation
+code, and one sensor saturation level for the bracket. Development uses linear
+output (`gamma=(1, 1)`), LibRaw's linear black-to-white scaling with a
+reference-fixed sensor white point, 16-bit linear-sRGB primaries, AHD demosaicing,
+and no automatic brightening, image-dependent maximum adjustment, denoising,
+median filtering, or highlight reconstruction.
 
-The important `rawpy.Params` choices are:
+When compatible sensor metadata is available, the program records CFA sites at
+their per-channel white levels before demosaicing and expands that mask over the
+demosaic footprint. Registration uses the mask when suitable, and the merge
+rejects those clipped measurements. Postprocessed RGB clipping detection is the
+fallback.
 
-- `gamma=(1, 1)`: linear light, not the normal sRGB transfer curve;
-- `no_auto_bright=True`: no histogram-dependent brightness correction;
-- `adjust_maximum_thr=0.0`: disables LibRaw's image-dependent maximum
-  adjustment, which could otherwise scale bracket members differently;
-- `output_bps=16`, fixed `user_wb`, fixed `user_sat`, and linear-sRGB primaries;
-- `HighlightMode.Ignore`: preserves channel headroom without highlight blending
-  or reconstruction;
-- AHD demosaicing, with FBDD noise reduction and median filtering disabled.
+### Translation-only registration
 
-LibRaw's normal black-to-white scaling remains enabled. It is linear, and its
-white point is fixed from the reference; disabling it would also bypass the
-white-balance stage. See the current
-[`rawpy.Params` API](https://letmaik.github.io/rawpy/api/rawpy.Params.html),
-[`RawPy` properties](https://letmaik.github.io/rawpy/api/rawpy.RawPy.html), and
-[`rawpy` linear-16-bit example](https://github.com/letmaik/rawpy).
-
-Before demosaicing, the program records CFA sites at their per-channel sensor
-white levels and dilates that mask over the demosaic footprint. Registration
-uses localized masks to remove clipped/bloomed evidence, while the HDR merge
-uses them to reject clipped measurements. The postprocessed `0.98` threshold is
-a secondary clipping check.
-
-### 2. Translation-only alignment
-
-No code path estimates rotation, scale, affine, projective, lens, or perspective
-parameters. The sole mapping is:
+The only estimated mapping is:
 
 ```text
 x' = x + dx
 y' = y + dy
 ```
 
-The program locates persistent foreground signal across the five downsampled
-frames, expands one shared crop around it, and builds three exposure-tolerant
-representations: log-gradient, log-high-pass, and an MTB-like bitmap. Localized
-saturated regions are smoothly excluded so their mask boundaries do not become
-false features. A bounded normalized cross-correlation searches only the
-configured `+/- max-shift` square. `phase_cross_correlation` then refines the
-residual on a subpixel grid. Its returned axis order is `(dy, dx)` and is the
-shift to apply to the moving frame, as documented by
-[`scikit-image`](https://scikit-image.org/docs/stable/api/skimage.registration.html#skimage.registration.phase_cross_correlation).
+The program locates persistent foreground signal, selects a shared crop, and
+compares three exposure-tolerant image representations. It combines independent
+shift candidates, checks the selected offsets against the configured bounds and
+burst-motion model, and records disagreements in the diagnostics. The final RGB
+image is resampled once with bilinear interpolation and constant borders;
+nothing wraps around an edge.
 
-Raw correlation scores from the three representations are not compared as if
-they shared one scale. Candidate shifts are clustered spatially, each family
-gets one vote, and the cluster corroborated by the most plausible independent
-families wins. Boundary, low-PSR, coarse-only, and unsupported solutions remain
-visible in diagnostics and can still make a bracket suspicious. Constant-motion
-and adjacent-continuity deviations can become advisories when they are bounded
-and every frame has strong image consensus; large jumps remain blocking. Failure
-is never upgraded to a more flexible transform.
+### Relative linear HDR merge
 
-The final developed RGB is resampled exactly once with bilinear interpolation,
-constant borders, and an explicit validity mask. Nothing wraps around an edge.
-
-### 3. Linear HDR merge
-
-For frame `i`, the relative exposure is computed from metadata as
+For frame `i`, relative exposure is calculated from metadata:
 
 ```text
 q_i = shutter_seconds * ISO / aperture^2
 relative_i = q_i / q_reference
-radiance_i = aligned_linear_RGB_i / relative_i
+normalized_i = aligned_linear_RGB_i / relative_i
 ```
 
-If every aperture is missing it is treated as constant and the cancellation is
-reported. Invalid shutter or ISO metadata stops the bracket. If known apertures
-vary while another is missing, the bracket is rejected rather than guessed.
-
-Weights are calculated from the original normalized linear measurement, not the
-amplified radiance. A smooth low-end ramp suppresses black-level/noise-dominated
-samples; a smooth high-end ramp and the sensor mask reject clipping; a signal
-factor favors the highest-SNR still-valid exposure. One scalar weight is used
-for all three RGB channels to prevent channel-dependent color seams:
+The merge weights the normalized measurements according to the original linear
+sample level. It suppresses black-level/noise-dominated samples, rolls off near
+clipping, rejects known saturated sensor sites, and uses one scalar weight per
+RGB triplet to avoid channel-dependent color seams:
 
 ```text
-HDR = sum(weight_i * radiance_i) / sum(weight_i)
+HDR = sum(weight_i * normalized_i) / sum(weight_i)
 ```
 
-If no ideal sample exists, the behavior is explicit: an all-saturated pixel uses
-the least-exposed frame as a lower bound, while an all-dark pixel uses the
-highest-exposure frame. Their counts are saved in the JSON sidecar. The result
-is never tone mapped or normalized to `[0, 1]`.
+If no ideal sample exists, an all-saturated pixel uses the least-exposed frame
+as a lower bound and an all-dark pixel uses the highest-exposure frame. Counts
+are stored in the JSON sidecar. The result is not tone mapped or normalized to
+the range `[0, 1]`.
 
-## Affinity Photo output
+## Output and color management
 
-The master is a single-page, contiguous RGB, IEEE float32 TIFF written
-uncompressed by `tifffile`. Values above `1.0` are preserved; the automated
-round-trip test includes values through `8.0`. The TIFF is deliberately
-unprofiled because embedding an ordinary nonlinear sRGB ICC profile would
-misdescribe linear samples. The TIFF description records linear-sRGB/BT.709
-primaries.
+HDR masters are single-page, contiguous, uncompressed RGB float32 TIFFs. Values
+above `1.0` are preserved. The files deliberately contain no ordinary sRGB ICC
+profile, because that would describe a nonlinear transfer curve rather than the
+stored linear samples.
 
-For the first real bracket, verify that Affinity Photo opens it as an `RGB/32`
-HDR document and that its 32-bit preview exposure control reveals highlight
-values above `1`. Assign a genuine linear-sRGB/scRGB profile if your Affinity
-workflow requires a profile; do not convert the samples through an ordinary
-transfer-encoded sRGB profile. Affinity documents
-[`32-bit HDR editing`](https://affinity.help/photo2/English.lproj/pages/HDR/hdr_editing.html)
-and its [`supported formats`](https://affinity.help/photo2/English.lproj/pages/Appendix/fileformat.html).
+Confirm that the first master opens as a 32-bit linear/HDR document in your
+editor, that values above `1.0` remain recoverable, and that any assigned profile
+describes linear sRGB/scRGB rather than transfer-encoded sRGB. Affinity Photo's
+documentation covers
+[32-bit HDR editing](https://affinity.help/photo2/English.lproj/pages/HDR/hdr_editing.html)
+and [supported formats](https://affinity.help/photo2/English.lproj/pages/Appendix/fileformat.html).
+Editor interoperability and color-profile assignment are not automated by this
+project.
 
-The TIFF structure and unbounded numeric values are tested here, but actual
-Affinity interoperability cannot be certified without opening the first master
-in your Affinity installation. If that acceptance check exposes a TIFF/profile
-problem, OpenEXR is the appropriate next output backend; Affinity explicitly
-supports a 32-bit-linear EXR workflow.
+## Tests
 
-## Tests and validation status
-
-Install the test dependency and run:
+Install the development dependency and run the synthetic test suite:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-The synthetic suite covers fractional translation sign/axis, exposure changes,
-candidate-family consensus, a post-totality partial limb with one-sided bloom,
-saturation-mask/ROI handling, camera-jitter advisories, clipping and black
-fallback behavior, shutter/ISO/aperture normalization, non-wrapping borders,
-grouping, rawpy parameter locking, aligned-only 16-bit outputs, and float-TIFF
-values above `1`.
+The tests cover translation direction and subpixel accuracy, exposure changes,
+candidate consensus, clipped-feature masking, ROI handling, motion checks,
+relative exposure normalization, merge fallbacks, non-wrapping borders,
+grouping, RAW-development parameter locking, aligned-only output, and float-TIFF
+values above `1.0`.
 
-A real five-NEF totality/diamond-ring bracket was also run end to end with rawpy
-0.27.0 / LibRaw 0.22.1. It contains 8288 x 5520 Nikon frames at 400 mm, ISO 64,
-f/7.1, and 1/250 through 1/40 second. Validation confirmed:
-
-- successful read-only NEF development with identical WB/orientation/white level;
-- all three registration representations agreeing to about 0.1–0.3 px;
-- observed linear brightness ratios of 1.604, 0.634, 1.000, 2.527, and 4.026,
-  versus metadata-predicted 1.600, 0.640, 1.000, 2.667, and 4.000;
-- a finite 5520 x 8288 x 3 classic TIFF with contiguous float32 RGB, no
-  compression, and no 8-bit conversion;
-- five full-resolution 5520 x 8288 aligned-only TIFFs with contiguous uint16
-  RGB, preserved individual exposures, and the same measured translations;
-- visually coincident lunar-limb edges plus retained corona and prominence detail
-  in the display-only diagnostics.
-
-That bracket's measured offsets did **not** follow constant motion: the maximum
-line-fit residual was 2.675 px and the adjacent second-difference was 6.002 px.
-The original validation used an explicit `--on-suspicious continue` override.
-The current policy records this kind of motion as an advisory when all frame
-translations have strong independent image support; the numeric deviations
-remain in the JSON sidecar.
-
-A second real bracket captured after totality contains a much larger clipped
-photospheric region covering part of the lunar limb. The old raw-score ranking
-selected an unsupported frame-3 boundary result `(dx=+20, dy=+14)`. Saturation-
-aware consensus with a constrained ROI now selects `(dx=-1.80, dy=-1.15)`,
-corroborated by gradient and high-pass evidence. The full bracket offsets are
-approximately `(-0.45,+4.20)`, `(-1.55,+2.30)`, `(0,0)`, `(-1.80,-1.15)`, and
-`(-2.95,-2.60)` as `(dx,dy)`, with visually coincident lunar-limb edges in the
-diagnostic overlay.
-
-The final remaining acceptance check is opening the generated master in the
-user's Affinity Photo installation and confirming its `RGB/32` interpretation
-and linear-profile workflow.
+The automated suite uses synthetic or mocked image data. The pipeline has also
+been manually checked end to end on two five-frame Nikon NEF eclipse brackets,
+but those source photographs are not distributed with this repository.

@@ -12,6 +12,7 @@ from typing import Any, Optional, Sequence
 
 import numpy as np
 
+from . import __version__
 from .aligned import export_aligned_linear_frames
 from .diagnostics import save_alignment_preview, save_edge_overlay, save_hdr_preview
 from .errors import EclipseHDRError, OutputExistsError, SuspiciousAlignmentError
@@ -176,7 +177,7 @@ def _base_sidecar(
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
-        "pipeline": "eclipse-hdr 0.1.0",
+        "pipeline": f"nef-eclipse-hdr {__version__}",
         "group_index": group_index,
         "status": "started",
         "reference_index": reference_index,
@@ -410,7 +411,7 @@ def process_bracket(
             )
             payload["merge"] = {
                 "method": (
-                    "linear relative radiance = RGB / (exposure/reference exposure); "
+                    "relative exposure-normalized RGB = RGB / (exposure/reference exposure); "
                     "smooth scalar black/highlight weight; no tone mapping"
                 ),
                 "settings": {
