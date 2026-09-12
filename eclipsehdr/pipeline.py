@@ -286,10 +286,16 @@ def process_bracket(
             ]
 
             alignment = estimate_group_alignment(
-                frames, metadata, reference_index, config.registration
+                frames,
+                metadata,
+                reference_index,
+                config.registration,
+                saturation_masks=masks,
             )
             payload["alignment"] = alignment.to_dict()
             _log_offsets(group_index, alignment)
+            for warning in alignment.warnings:
+                LOGGER.warning("Group %d alignment advisory: %s", group_index, warning)
 
             if config.save_diagnostics:
                 diagnostics_dir = config.output_dir / "diagnostics"

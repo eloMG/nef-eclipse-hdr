@@ -53,8 +53,11 @@ Inspect these before starting the batch:
   checks, exposure factors, fallback-pixel counts, and warnings;
 - the solar limb/corona in the `*_HDR.tif` master at high zoom.
 
-The default policy is `--on-suspicious skip`: a bracket that fails a translation
-or constant-motion check gets a JSON report and diagnostics but no HDR master.
+The default policy is `--on-suspicious skip`: a bracket that fails translation
+confidence or independent-representation consensus gets a JSON report and
+diagnostics but no HDR master. Motion-model deviations remain blocking when the
+image evidence is weak; moderate deviations with strong independent consensus
+are recorded as advisories, while large discontinuities remain blocking.
 After manual inspection, an individual bracket can deliberately be rerun with
 `--on-suspicious continue --overwrite`. That override is recorded in its JSON.
 
@@ -183,9 +186,10 @@ white-balance stage. See the current
 [`rawpy` linear-16-bit example](https://github.com/letmaik/rawpy).
 
 Before demosaicing, the program records CFA sites at their per-channel sensor
-white levels, dilates that mask over the demosaic footprint, and carries it
-through alignment. The postprocessed `0.98` threshold is a secondary clipping
-check.
+white levels and dilates that mask over the demosaic footprint. Registration
+uses localized masks to remove clipped/bloomed evidence, while the HDR merge
+uses them to reject clipped measurements. The postprocessed `0.98` threshold is
+a secondary clipping check.
 
 ### 2. Translation-only alignment
 
@@ -197,19 +201,24 @@ x' = x + dx
 y' = y + dy
 ```
 
-The program locates a compact foreground signal from all five downsampled
-frames, expands one shared crop around it, and builds three
-exposure-tolerant representations: log-gradient, log-high-pass, and an MTB-like
-bitmap. A bounded normalized cross-correlation searches only the configured
-`+/- max-shift` square. `phase_cross_correlation` then refines the residual on a
-subpixel grid. Its returned axis order is `(dy, dx)` and is the shift to apply to
-the moving frame, as documented by
+The program locates persistent foreground signal across the five downsampled
+frames, expands one shared crop around it, and builds three exposure-tolerant
+representations: log-gradient, log-high-pass, and an MTB-like bitmap. Localized
+saturated regions are smoothly excluded so their mask boundaries do not become
+false features. A bounded normalized cross-correlation searches only the
+configured `+/- max-shift` square. `phase_cross_correlation` then refines the
+residual on a subpixel grid. Its returned axis order is `(dy, dx)` and is the
+shift to apply to the moving frame, as documented by
 [`scikit-image`](https://scikit-image.org/docs/stable/api/skimage.registration.html#skimage.registration.phase_cross_correlation).
 
-The offsets must stay within the componentwise shift limit, agree across useful
-representations, fit approximately constant motion through the reference, and
-avoid a sudden adjacent second-difference. Failure is reported, never upgraded
-to a more flexible transform.
+Raw correlation scores from the three representations are not compared as if
+they shared one scale. Candidate shifts are clustered spatially, each family
+gets one vote, and the cluster corroborated by the most plausible independent
+families wins. Boundary, low-PSR, coarse-only, and unsupported solutions remain
+visible in diagnostics and can still make a bracket suspicious. Constant-motion
+and adjacent-continuity deviations can become advisories when they are bounded
+and every frame has strong image consensus; large jumps remain blocking. Failure
+is never upgraded to a more flexible transform.
 
 The final developed RGB is resampled exactly once with bilinear interpolation,
 constant borders, and an explicit validity mask. Nothing wraps around an edge.
@@ -276,9 +285,11 @@ Install the test dependency and run:
 ```
 
 The synthetic suite covers fractional translation sign/axis, exposure changes,
-constant-motion checks, clipping and black fallback behavior, shutter/ISO/
-aperture normalization, non-wrapping borders, grouping, rawpy parameter locking,
-aligned-only 16-bit outputs, and float-TIFF values above `1`.
+candidate-family consensus, a post-totality partial limb with one-sided bloom,
+saturation-mask/ROI handling, camera-jitter advisories, clipping and black
+fallback behavior, shutter/ISO/aperture normalization, non-wrapping borders,
+grouping, rawpy parameter locking, aligned-only 16-bit outputs, and float-TIFF
+values above `1`.
 
 A real five-NEF totality/diamond-ring bracket was also run end to end with rawpy
 0.27.0 / LibRaw 0.22.1. It contains 8288 x 5520 Nikon frames at 400 mm, ISO 64,
@@ -297,10 +308,19 @@ f/7.1, and 1/250 through 1/40 second. Validation confirmed:
 
 That bracket's measured offsets did **not** follow constant motion: the maximum
 line-fit residual was 2.675 px and the adjacent second-difference was 6.002 px.
-The default policy correctly marked and skipped it. The HDR writer was exercised
-only with the explicit `--on-suspicious continue` override, and the JSON records
-`complete_suspicious_override`. This demonstrates the intended fail-visible
-behavior, not a relaxation of the translation-only checks.
+The original validation used an explicit `--on-suspicious continue` override.
+The current policy records this kind of motion as an advisory when all frame
+translations have strong independent image support; the numeric deviations
+remain in the JSON sidecar.
+
+A second real bracket captured after totality contains a much larger clipped
+photospheric region covering part of the lunar limb. The old raw-score ranking
+selected an unsupported frame-3 boundary result `(dx=+20, dy=+14)`. Saturation-
+aware consensus with a constrained ROI now selects `(dx=-1.80, dy=-1.15)`,
+corroborated by gradient and high-pass evidence. The full bracket offsets are
+approximately `(-0.45,+4.20)`, `(-1.55,+2.30)`, `(0,0)`, `(-1.80,-1.15)`, and
+`(-2.95,-2.60)` as `(dx,dy)`, with visually coincident lunar-limb edges in the
+diagnostic overlay.
 
 The final remaining acceptance check is opening the generated master in the
 user's Affinity Photo installation and confirming its `RGB/32` interpretation

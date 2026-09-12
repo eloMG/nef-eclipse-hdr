@@ -13,6 +13,7 @@ from eclipsehdr.models import (
 from eclipsehdr.registration import (
     _has_independent_support,
     _method_disagreement,
+    _rank_candidates_by_consensus,
     estimate_group_alignment,
     estimate_pair_translation,
     physical_sanity_checks,
@@ -92,6 +93,65 @@ def test_five_frame_exposure_variant_alignment_and_linear_motion() -> None:
     assert not result.suspicious, result.issues
 
 
+def test_corroborated_camera_jitter_is_reported_without_blocking_alignment() -> None:
+    scene = _solar_scene()
+    displacements = [
+        (-3.0, 1.0),
+        (-1.0, 0.0),
+        (0.0, 0.0),
+        (2.0, -1.0),
+        (1.0, 2.0),
+    ]
+    frames = [_u16_shifted(scene, shift, 1.0) for shift in displacements]
+    result = estimate_group_alignment(
+        frames,
+        _metadata(5, 2),
+        2,
+        RegistrationConfig(
+            max_shift_px=8,
+            crop_size_px=192,
+            manual_roi_xywh=(0, 0, 256, 256),
+            max_linear_residual_px=0.1,
+            max_acceleration_px=0.1,
+        ),
+    )
+
+    assert not result.suspicious, result.issues
+    assert any("constant linear motion" in warning for warning in result.warnings)
+    assert any("discontinuity" in warning for warning in result.warnings)
+
+
+def test_gross_motion_discontinuity_remains_blocking_despite_local_consensus() -> None:
+    scene = _solar_scene()
+    displacements = [
+        (-8.0, 0.0),
+        (8.0, 0.0),
+        (0.0, 0.0),
+        (-8.0, 0.0),
+        (8.0, 0.0),
+    ]
+    frames = [_u16_shifted(scene, shift, 1.0) for shift in displacements]
+    result = estimate_group_alignment(
+        frames,
+        _metadata(5, 2),
+        2,
+        RegistrationConfig(
+            max_shift_px=12,
+            crop_size_px=192,
+            manual_roi_xywh=(0, 0, 256, 256),
+            max_linear_residual_px=0.1,
+            max_acceleration_px=0.1,
+        ),
+    )
+
+    assert result.suspicious
+    assert any(
+        "constant linear motion" in issue or "discontinuity" in issue
+        for issue in result.issues
+    )
+    assert not any("lacks corroboration" in issue for issue in result.issues)
+
+
 def test_physical_check_flags_discontinuous_outlier() -> None:
     offsets = [
         FrameAlignment(0, 2.0, -2.0, "test", 1.0),
@@ -129,6 +189,149 @@ def test_consensus_ignores_garbage_support_and_flags_good_disagreement() -> None
     )
     assert not _has_independent_support(frame, threshold=1.5, min_psr=1.25, min_score=0.05)
     assert _method_disagreement(frame, threshold=1.5, min_psr=1.25, min_score=0.05)
+
+
+def test_candidate_consensus_beats_higher_scoring_single_family_outlier() -> None:
+    config = RegistrationConfig(max_shift_px=20, max_method_disagreement_px=1.5)
+    outlier = RegistrationCandidate(
+        14.0, 12.0, "bounded-ZNCC/mtb/phase", 0.99, 0.98, 8.0, 0.01
+    )
+    gradient = RegistrationCandidate(
+        -1.60, -1.00, "bounded-ZNCC/log-gradient/phase", 0.76, 0.73, 5.2, 0.03
+    )
+    highpass = RegistrationCandidate(
+        -1.55, -1.08, "bounded-ZNCC/log-highpass/phase", 0.71, 0.69, 4.8, 0.04
+    )
+
+    ranked = _rank_candidates_by_consensus((outlier, gradient, highpass), config)
+
+    assert ranked[0] is gradient
+    assert ranked.index(outlier) > 0
+
+
+def test_candidate_consensus_counts_one_vote_per_family_and_ignores_bad_support() -> None:
+    config = RegistrationConfig(max_shift_px=20, max_method_disagreement_px=1.5)
+    wrong_gradient_phase = RegistrationCandidate(
+        8.0, 9.0, "bounded-ZNCC/log-gradient/phase", 0.99, 0.98, 8.0, 0.01
+    )
+    wrong_gradient_unnormalized = RegistrationCandidate(
+        8.1,
+        9.1,
+        "bounded-ZNCC/log-gradient/unnormalized",
+        0.98,
+        0.97,
+        7.8,
+        0.02,
+    )
+    bad_highpass_support = RegistrationCandidate(
+        8.0, 9.1, "bounded-ZNCC/log-highpass/phase", 0.01, 0.20, 0.4, 0.4
+    )
+    correct_highpass = RegistrationCandidate(
+        -1.6, -1.0, "bounded-ZNCC/log-highpass/phase", 0.72, 0.70, 4.8, 0.03
+    )
+    correct_mtb = RegistrationCandidate(
+        -1.5, -1.1, "bounded-ZNCC/mtb/phase", 0.66, 0.64, 4.3, 0.05
+    )
+
+    ranked = _rank_candidates_by_consensus(
+        (
+            wrong_gradient_phase,
+            wrong_gradient_unnormalized,
+            bad_highpass_support,
+            correct_highpass,
+            correct_mtb,
+        ),
+        config,
+    )
+
+    assert ranked[0] is correct_highpass
+
+
+def test_candidate_consensus_rejects_chained_three_family_cluster() -> None:
+    config = RegistrationConfig(max_shift_px=8, max_method_disagreement_px=1.5)
+    gradient = RegistrationCandidate(
+        0.0, -1.4, "bounded-ZNCC/log-gradient/phase", 0.8, 0.75, 4.0, 0.05
+    )
+    mtb = RegistrationCandidate(
+        0.0, 0.0, "bounded-ZNCC/mtb/phase", 0.8, 0.75, 4.0, 0.05
+    )
+    highpass = RegistrationCandidate(
+        0.0, 1.4, "bounded-ZNCC/log-highpass/phase", 0.8, 0.75, 4.0, 0.05
+    )
+
+    ranked = _rank_candidates_by_consensus((gradient, mtb, highpass), config)
+    selected = ranked[0]
+    frame = FrameAlignment(
+        0,
+        dy=selected.dy,
+        dx=selected.dx,
+        method=selected.method,
+        score=selected.score,
+        candidates=ranked,
+    )
+
+    assert _method_disagreement(
+        frame,
+        threshold=config.max_method_disagreement_px,
+        min_psr=config.min_psr,
+        min_score=config.min_score,
+    )
+
+
+def test_post_totality_bloom_outlier_does_not_override_partial_limb_consensus() -> None:
+    size = 192
+    y, x = np.mgrid[:size, :size].astype(np.float32)
+    cy, cx, radius = 96.0, 92.0, 38.0
+    radial_distance = np.hypot(y - cy, x - cx)
+    angle = np.arctan2(y - cy, x - cx)
+    corona = (
+        0.025
+        * np.exp(-np.maximum(radial_distance - radius, 0.0) / 26.0)
+        * (radial_distance >= radius - 3.0)
+    )
+    limb = 0.075 * np.exp(-0.5 * ((radial_distance - radius) / 1.25) ** 2)
+    limb *= 0.75 + 0.16 * np.sin(3.0 * angle) + 0.09 * np.cos(5.0 * angle)
+    prominence = 0.07 * np.exp(
+        -((x - (cx - 29.0)) ** 2 + (y - (cy + 24.0)) ** 2) / 16.0
+    )
+    exposed_photosphere = 0.9 * np.exp(
+        -((x - (cx + radius - 1.0)) ** 2 + (y - (cy - 8.0)) ** 2)
+        / (2.0 * 5.0**2)
+    )
+    luminance = corona + limb + prominence + exposed_photosphere
+    scene = np.stack([luminance, 0.9 * luminance, 0.68 * luminance], axis=2)
+
+    reference = _u16_shifted(scene, (0.0, 0.0), 1.0)
+    moving_linear = scene * np.float32(6.0)
+    saturated_source = np.max(moving_linear, axis=2) >= 0.75
+    bloom = ndimage.gaussian_filter(saturated_source.astype(np.float32), sigma=20.0)
+    bloom /= np.max(bloom)
+    # Model a one-sided sensor/optical spill extending inward over the lunar disc.
+    bloom *= x <= cx + radius + 2.0
+    moving_measured = np.clip(moving_linear + bloom[..., None], 0.0, 1.0)
+    moving = _u16_shifted(moving_measured, (2.4, -3.2), 1.0)
+    config = RegistrationConfig(max_shift_px=16, crop_size_px=160, upsample_factor=10)
+
+    candidates = estimate_pair_translation(reference, moving, config)
+    expected_dy, expected_dx = -2.4, 3.2
+    best_by_family: dict[str, RegistrationCandidate] = {}
+    for candidate in candidates:
+        family = candidate.method.split("/")[1]
+        previous = best_by_family.get(family)
+        if previous is None or candidate.score > previous.score:
+            best_by_family[family] = candidate
+
+    selected = candidates[0]
+    assert selected.method.split("/")[1] in {"log-gradient", "log-highpass"}
+    assert np.hypot(selected.dy - expected_dy, selected.dx - expected_dx) < 0.5
+    assert np.hypot(
+        best_by_family["log-gradient"].dy - best_by_family["log-highpass"].dy,
+        best_by_family["log-gradient"].dx - best_by_family["log-highpass"].dx,
+    ) < config.max_method_disagreement_px
+    assert np.hypot(
+        best_by_family["mtb"].dy - expected_dy,
+        best_by_family["mtb"].dx - expected_dx,
+    ) > 3.0
 
 
 def test_irregular_timestamps_do_not_flag_exact_constant_velocity() -> None:

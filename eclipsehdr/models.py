@@ -135,6 +135,7 @@ class AlignmentResult:
     time_basis: str = "frame_index"
     linear_velocity_xy: Tuple[float, float] = (0.0, 0.0)
     max_linear_residual_px: float = 0.0
+    warnings: Tuple[str, ...] = ()
 
     @property
     def offsets_yx(self) -> tuple[tuple[float, float], ...]:
@@ -152,6 +153,7 @@ class AlignmentResult:
             "sanity": {
                 "suspicious": self.suspicious,
                 "issues": list(self.issues),
+                "warnings": list(self.warnings),
                 "time_basis": self.time_basis,
                 "linear_velocity_dx": self.linear_velocity_xy[0],
                 "linear_velocity_dy": self.linear_velocity_xy[1],

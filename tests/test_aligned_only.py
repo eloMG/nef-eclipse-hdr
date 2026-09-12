@@ -87,7 +87,9 @@ def test_aligned_only_writes_indexed_linear_tiffs_and_never_merges(
         raise AssertionError("aligned-only mode must not run HDR exposure or merge operations")
 
     monkeypatch.setattr(pipeline_module, "develop_group", fake_develop_group)
-    monkeypatch.setattr(pipeline_module, "estimate_group_alignment", lambda *args: alignment)
+    monkeypatch.setattr(
+        pipeline_module, "estimate_group_alignment", lambda *args, **kwargs: alignment
+    )
     monkeypatch.setattr(pipeline_module, "exposure_factors", unexpected_hdr_operation)
     monkeypatch.setattr(pipeline_module, "merge_linear_hdr", unexpected_hdr_operation)
 
